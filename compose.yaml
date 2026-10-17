@@ -1,0 +1,84 @@
+name: ${COMPOSE_PROJECT_NAME:?Ejecutar configure.py}
+x-db-env: &db-env
+  PGHOST: ${POSTGRES_HOST:?Configurar host}
+  PGPORT: '5432'
+  PGDATABASE: postgres
+  PGUSER: ${POSTGRES_USERNAME:?Configurar rol}
+  PGPASSWORD: ${POSTGRES_PASSWORD:?Configurar clave}
+  PGSSLMODE: verify-full
+  PGSSLROOTCERT: /run/supabase/ca.crt
+  PGCONNECT_TIMEOUT: '15'
+x-app-env: &app-env
+  LISTMONK_app__address: 0.0.0.0:9000
+  LISTMONK_db__host: ${POSTGRES_HOST:?Configurar host}
+  LISTMONK_db__port: '5432'
+  LISTMONK_db__user: ${POSTGRES_USERNAME:?Configurar rol}
+  LISTMONK_db__password: ${POSTGRES_PASSWORD:?Configurar clave}
+  LISTMONK_db__database: postgres
+  LISTMONK_db__ssl_mode: verify-full
+  LISTMONK_db__params: sslrootcert=/run/supabase/ca.crt connect_timeout=15 application_name=hefesto_listmonk
+  LISTMONK_db__max_open: '5'
+  LISTMONK_db__max_idle: '2'
+  LISTMONK_db__max_lifetime: 300s
+  PUID: '1000'
+  PGID: '1000'
+  TZ: Etc/UTC
+services:
+  preflight:
+    image: postgres:17-alpine
+    restart: 'no'
+    environment:
+      <<: *db-env
+      SUPABASE_DEDICATED_CONFIRMED: ${SUPABASE_DEDICATED_CONFIRMED:-false}
+      SUPABASE_DATA_API_DISABLED: ${SUPABASE_DATA_API_DISABLED:-false}
+    volumes: [./certs:/run/supabase:ro, ./ops:/opt/hefesto:ro]
+    entrypoint: [/bin/sh, /opt/hefesto/preflight.sh]
+  prepare:
+    image: listmonk/listmonk:v6.2.0@sha256:f535d59e14991337a9f2d570273685378ae86b0d7698c3e00da444e3bc205286
+    restart: 'no'
+    depends_on:
+      preflight: {condition: service_completed_successfully}
+    environment:
+      <<: *app-env
+      LISTMONK_ADMIN_USER: admin
+      LISTMONK_ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Generar clave inicial}
+    volumes: [./certs:/run/supabase:ro]
+    command: [sh, -c, "./listmonk --install --idempotent --yes --config '' && ./listmonk --upgrade --yes --config ''"]
+  configure:
+    image: postgres:17-alpine
+    restart: 'no'
+    depends_on:
+      prepare: {condition: service_completed_successfully}
+    environment:
+      <<: *db-env
+      NEWS_HOST: ${NEWS_HOST:?Configurar dominio}
+      DELIVERY_ENABLED: ${DELIVERY_ENABLED:-false}
+    volumes: [./certs:/run/supabase:ro, ./ops:/opt/hefesto:ro]
+    entrypoint: [/bin/sh, /opt/hefesto/configure.sh]
+  app:
+    image: listmonk/listmonk:v6.2.0@sha256:f535d59e14991337a9f2d570273685378ae86b0d7698c3e00da444e3bc205286
+    restart: unless-stopped
+    stop_grace_period: 60s
+    depends_on:
+      configure: {condition: service_completed_successfully}
+    environment: *app-env
+    command: [./listmonk, --config, '']
+    volumes: [./certs:/run/supabase:ro, uploads:/listmonk/uploads]
+    expose: ['9000']
+    healthcheck:
+      test: [CMD, wget, -q, --spider, http://127.0.0.1:9000/health]
+      interval: 30s
+      timeout: 10s
+      retries: 6
+      start_period: 90s
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: '3'}
+  dbtools:
+    image: postgres:17-alpine
+    profiles: [tools]
+    environment: *db-env
+    volumes: [./certs:/run/supabase:ro, ./ops:/opt/hefesto:ro]
+volumes:
+  uploads:
+    name: ${VOLUME_PREFIX:?Falta prefijo}-uploads

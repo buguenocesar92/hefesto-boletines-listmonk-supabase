@@ -1,0 +1,1 @@
+Obtener la CA válida del endpoint PostgreSQL de tu proyecto Supabase y guardarla como ca.crt. No es una clave privada. No desactivar verify-full si falla el certificado; comprobar host, cadena y endpoint directo/Session.

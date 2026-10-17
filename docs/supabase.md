@@ -1,0 +1,10 @@
+# Supabase dedicado
+1. Crear un proyecto exclusivo con PostgreSQL 16/17. No usar public de una aplicación existente; listmonk instala tipos, tablas y vistas materializadas propias. Desactivar Data API para este proyecto.
+2. Ejecutar sql/01-supabase-app.sql desde SQL Editor administrativo. Crea listmonk_app sin privilegios de administración, prepara pgcrypto en extensions, search_path public,extensions y permisos. Si ya existe pgcrypto se conserva su ubicación. No concede postgres al contenedor.
+3. Asignar al rol la POSTGRES_PASSWORD generada en .env, mediante sesión psql administrativa TLS y `\password listmonk_app` (entrada interactiva). Mantenerla hex sin espacios: el conector de esta versión construye DSN con campos separados por espacios. No pegar claves en tickets/historiales.
+4. Configurar POSTGRES_HOST con host directo 5432 o Session pooler 5432 si el VPS necesita IPv4. No usar Transaction pooler 6543. POSTGRES_USERNAME es listmonk_app en directo o el formato específico del rol en tu pooler (normalmente listmonk_app.REFERENCIA). current_user debe ser listmonk_app.
+5. Guardar CA válida de ese endpoint en certs/ca.crt y confirmar variables SUPABASE_DEDICATED_CONFIRMED=true y SUPABASE_DATA_API_DISABLED=true. No desactivar verificación de certificados para resolver un error.
+6. `docker compose run --rm preflight` valida conexión TLS, versión, rol, pgcrypto, permisos y tablas. La confirmación Data API es manual; el script revisa permisos relevantes, no consulta el panel Supabase.
+7. El servicio prepare ejecuta instalación idempotente y actualización nativas. No ejecutar --install sin --idempotent: el instalador puede eliminar tablas/tipos de listmonk. El preflight rechaza bases no vacías sin los marcadores esperados. Si falla a mitad, analizar el error antes de repetir, preferentemente reconstruir en otro proyecto vacío.
+
+El administrador preinstala pgcrypto para evitar pedir privilegios elevados al usuario de aplicación. Conservar el rol, permisos/search_path y versión en futuras migraciones. El pool del kit limita conexiones a 5/2; dimensionar con carga real y límites de Supabase. Fallas/pausas de DB afectan toda la aplicación.

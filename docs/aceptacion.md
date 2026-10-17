@@ -1,0 +1,14 @@
+# Aceptación en VPS · pendiente
+- [ ] Preflight SQL y TLS con CA/hostname correctos; CA incorrecta falla.
+- [ ] Rol listmonk_app, pgcrypto y search_path correctos; Data API desactivada.
+- [ ] Instalación idempotente y upgrade completan; reinicio no reinstala tablas.
+- [ ] Admin cambia clave/correo, habilita TOTP; usuarios sin permiso no envían campañas.
+- [ ] DELIVERY_ENABLED=false deshabilita proveedores y suspende campañas al arrancar.
+- [ ] HTTPS y panel correctos; confirmación/baja públicos no bloqueados por proxy.
+- [ ] Alta de prueba, doble opt-in y preferencias funcionan al configurar SMTP.
+- [ ] Baja y blocklist se respetan después de nueva importación y restauración.
+- [ ] SMTP probado con destinatario autorizado; rebotes/quejas y límites validados.
+- [ ] Plantilla renderiza en clientes objetivo; enlace de baja y alternativa texto comprobados.
+- [ ] Medios persisten al recrear contenedor y restaurar en otro proyecto.
+- [ ] Backup y restore reales comparan conteos; campañas restauradas no envían al iniciar.
+- [ ] Retención, capacidad, copias externas cifradas y responsable aprobados.
