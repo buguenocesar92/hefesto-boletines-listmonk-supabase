@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # Check que los composes que Coolify va a desplegar en este repositorio
-# cumplen el contrato del plan (puntos 1 y 2) y, para bd: supabase-pg,
-# dejan visibles DB_NAME=mvp_prueba y DB_SSLMODE=disable en el render.
+# cumplen el contrato Coolify (puntos 1, 2 y 3) y, para bd: supabase-pg,
+# dejan visibles DB_NAME=mvp_prueba y DB_SSLMODE=disable en los lugares
+# exactos del render (PGDATABASE/LISTMONK_db__database y
+# PGSSLMODE/LISTMONK_db__ssl_mode).
 #
 # - Genera un .env temporal con valores no secretos (x123...) para cada
 #   ${VAR} del compose (hosts/URLs usan ejemplo.invalid).
 # - Para bd: supabase-pg agrega DB_SSLMODE=disable y DB_NAME=mvp_prueba.
 # - Renderiza con `docker compose config --format json` y falla con
-#   'servicio: motivo' por cada incumplimiento.
+#   '<servicio|red|volumen>: motivo' por cada incumplimiento.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -23,7 +25,8 @@ note() { printf '%s\n' "$*"; }
 # publica 127.0.0.1:8094 a propósito.
 COMPOSES=(compose.yaml)
 
-# Variables extra que el plan exige para aplicaciones bd: supabase-pg.
+# Variables extra que el contrato Coolify exige para aplicaciones
+# bd: supabase-pg (base lógica parametrizable y modo TLS opcional).
 EXTRA_ENV=(
   'DB_SSLMODE=disable'
   'DB_NAME=mvp_prueba'
@@ -114,16 +117,64 @@ contract_violations() {
     '
 }
 
-# Detecta en el FUENTE de un compose líneas `name:` con un valor literal
-# (no derivado de ${VAR...}). Un `name: ${...}` se considera válido aunque
-# tenga default; el contrato exige que cualquier nombre venga de una variable.
+# Detecta en el FUENTE de un compose violaciones del contrato sobre
+# nombres (punto 2):
+#   - cualquier `name:` a nivel raíz (sea literal o ${VAR...}) está prohibido;
+#   - cualquier `name:` bajo una red (sección `networks:`) está prohibido;
+#   - bajo una sección `volumes:` un `name:` sólo se admite si es
+#     ${VAR:-default}; las formas `${VAR}` y `${VAR:?...}` fallan.
+# Emite una línea por violación, formato `<compose>: <sección>: motivo`.
 fixed_name_violations() {
     local compose="$1"
-    # Coincide con líneas que tengan `name:` y el siguiente token NO empiece con `$`.
-    # No opera contra renders para no perder el origen variable vs literal.
-    grep -nE '^[[:space:]]*name:[[:space:]]+[^$[:space:]#]' "$REPO_ROOT/$compose" \
-        | sed "s|^|$compose: |" \
-        || true
+    awk -v file="$compose" '
+        function emit(msg) { print file ": " msg }
+
+        # Detecta nivel de indentación (columna del primer no-espacio).
+        function lvl(line,    i, n) {
+            n = length(line)
+            for (i = 1; i <= n; i++) {
+                if (substr(line, i, 1) != " ") return i - 1
+            }
+            return n
+        }
+        function val_of(line) {
+            sub(/^[[:space:]]*name:[[:space:]]*/, "", line)
+            sub(/[[:space:]]*#.*$/, "", line)
+            return line
+        }
+        function is_default_var(v) {
+            # ${VAR:-default}, con VAR en mayúsculas; el resto falla.
+            return (v ~ /^\$\{[A-Z_][A-Z0-9_]*:-/)
+        }
+
+        {
+            indent = lvl($0)
+            raw = $0
+            if (indent == 0 && /^name:[[:space:]]+/) {
+                v = val_of(raw)
+                emit("root: name fijado en compose (" v ")")
+            }
+            else if (indent == 0 && /^networks:[[:space:]]*$/) {
+                section = "networks"; next
+            }
+            else if (indent == 0 && /^volumes:[[:space:]]*$/) {
+                section = "volumes"; next
+            }
+            else if (indent == 0) {
+                section = ""
+            }
+            else if (section == "networks" && /name:[[:space:]]+/) {
+                v = val_of(raw)
+                emit("networks: name fijado (" v ")")
+            }
+            else if (section == "volumes" && /name:[[:space:]]+/) {
+                v = val_of(raw)
+                if (!is_default_var(v)) {
+                    emit("volumes: name sin variable con default (" v ")")
+                }
+            }
+        }
+    ' "$REPO_ROOT/$compose" || true
 }
 
 # Llama a contract_violations sin silenciar el código de salida de jq.
@@ -162,13 +213,27 @@ for compose in "${COMPOSES[@]}"; do
         overall_status=1
     fi
 
-    # Para bd: supabase-pg el plan exige ver mvp_prueba y disable en el render.
-    if ! grep -q -F 'mvp_prueba' <<<"$rendered"; then
-        echo "$compose: mvp_prueba (DB_NAME) no aparece en el render"
+    # Para bd: supabase-pg el contrato Coolify exige ver DB_NAME=mvp_prueba y
+    # DB_SSLMODE=disable en los lugares exactos del render (no en cualquier
+    # parte del JSON como hacía grep -F).
+    if ! jq -e '.services.preflight.environment.PGDATABASE == "mvp_prueba"' \
+            >/dev/null 2>&1 <<<"$rendered"; then
+        echo "$compose: services.preflight.environment.PGDATABASE != 'mvp_prueba' en el render"
         overall_status=1
     fi
-    if ! grep -q -F 'disable' <<<"$rendered"; then
-        echo "$compose: disable (DB_SSLMODE) no aparece en el render"
+    if ! jq -e '.services.app.environment.LISTMONK_db__database == "mvp_prueba"' \
+            >/dev/null 2>&1 <<<"$rendered"; then
+        echo "$compose: services.app.environment.LISTMONK_db__database != 'mvp_prueba' en el render"
+        overall_status=1
+    fi
+    if ! jq -e '.services.preflight.environment.PGSSLMODE == "disable"' \
+            >/dev/null 2>&1 <<<"$rendered"; then
+        echo "$compose: services.preflight.environment.PGSSLMODE != 'disable' en el render"
+        overall_status=1
+    fi
+    if ! jq -e '.services.app.environment.LISTMONK_db__ssl_mode == "disable"' \
+            >/dev/null 2>&1 <<<"$rendered"; then
+        echo "$compose: services.app.environment.LISTMONK_db__ssl_mode != 'disable' en el render"
         overall_status=1
     fi
 done

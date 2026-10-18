@@ -17,7 +17,11 @@ x-app-env: &app-env
   LISTMONK_db__password: ${POSTGRES_PASSWORD:?Configurar clave}
   LISTMONK_db__database: ${DB_NAME:-postgres}
   LISTMONK_db__ssl_mode: ${DB_SSLMODE:-verify-full}
-  LISTMONK_db__params: sslrootcert=/run/supabase/ca.crt connect_timeout=15 application_name=hefesto_listmonk
+  # Por defecto conserva `sslrootcert=/run/supabase/ca.crt` para el modo
+  # verify-full. Cuando DB_SSLMODE no es verify-full fijar DB_SSL_PARAMS=""
+  # para impedir que el driver intente leer una CA inexistente (require,
+  # prefer o disable).
+  LISTMONK_db__params: ${DB_SSL_PARAMS-sslrootcert=/run/supabase/ca.crt} connect_timeout=15 application_name=hefesto_listmonk
   LISTMONK_db__max_open: '5'
   LISTMONK_db__max_idle: '2'
   LISTMONK_db__max_lifetime: 300s

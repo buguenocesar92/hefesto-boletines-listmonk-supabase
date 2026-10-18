@@ -5,6 +5,6 @@ set -eu
 # Si la conexión es sin TLS, no exigimos la CA del servidor de Postgres.
 # Usamos PGSSLMODE (heredado de x-db-env) en lugar de DB_SSLMODE porque este
 # script corre en un contenedor donde sólo PGSSLMODE está exportado.
-[ "${PGSSLMODE:-verify-full}" = "disable" ] || [ -s "$PGSSLROOTCERT" ] || { echo 'Falta certificado CA'; exit 1; }
+[ "${PGSSLMODE:-verify-full}" != verify-full ] || [ -s "$PGSSLROOTCERT" ] || { echo 'Falta certificado CA'; exit 1; }
 export PGCONNECT_TIMEOUT=15
 psql --no-psqlrc -v ON_ERROR_STOP=1 -f /opt/hefesto/preflight.sql
