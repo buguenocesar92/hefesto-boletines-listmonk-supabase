@@ -44,46 +44,47 @@ Variables existentes obligatorias: `POSTGRES_HOST`, `POSTGRES_USERNAME`
 
 ### Base de datos propia `mvp_<slug>`
 
-Por diagnóstico y contrato, en el MVP compartido cada app vive en su propia base
-del mismo Postgres (`mvp_<slug>`), no en `postgres`. El rol sigue siendo
-`listmonk_app` (parámetro `POSTGRES_USERNAME`; `ops/preflight.sql` exige ese
-nombre literal, no parametriza).
+En el MVP compartido cada app vive en su propia base del mismo Postgres
+(`mvp_<slug>`), no en `postgres`. El rol sigue siendo `listmonk_app`:
+`POSTGRES_USERNAME` debe quedar en `listmonk_app`, porque `ops/preflight.sql`
+exige ese nombre literal.
 
-Antes del primer `up`, en SQL Editor con rol administrativo (`postgres`):
+Antes del primer despliegue, ejecutar estos pasos en este orden desde una
+terminal con `psql` y el rol administrativo `postgres`. No usar el editor web
+de Supabase: `CREATE DATABASE` y `\password` necesitan `psql`.
 
-1. Crear la base `mvp_<slug>` y la extensión `pgcrypto` en el esquema
-   `extensions`. El kit asume que existe `extensions.pgcrypto` en el
-   `search_path`:
+```sh
+# Conexión administrativa (psql pide la clave de postgres por teclado).
+# Con TLS: PGSSLMODE=verify-full y PGSSLROOTCERT=certs/ca.crt.
+export PGHOST=<host de Postgres> PGPORT=5432 PGUSER=postgres PGSSLMODE=disable
+SLUG_DB=mvp_boletines
 
-   ```sql
-   CREATE DATABASE mvp_boletines;
-   \c mvp_boletines
-   CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA extensions;
-   GRANT USAGE ON SCHEMA extensions TO listmonk_app;
-   ALTER ROLE listmonk_app IN DATABASE mvp_boletines SET search_path = public, extensions;
-   ```
+# 1. Crear la base y, dentro de ella, el esquema extensions.
+psql -v ON_ERROR_STOP=1 -d postgres -c "CREATE DATABASE $SLUG_DB"
+psql -v ON_ERROR_STOP=1 -d "$SLUG_DB" -c 'CREATE SCHEMA IF NOT EXISTS extensions'
 
-2. Ejecutar `sql/01-supabase-app.sql` reemplazando `postgres` por `mvp_<slug>`.
-   El archivo asume `DATABASE postgres` como placeholder; copiarlo a un
-   `01-supabase-app.mvp_boletines.sql` con esa sustitución y correrlo con
-   `psql` administrativo. Resultado: el rol `listmonk_app` recibe `CONNECT`,
-   `USAGE`, `CREATE` sobre el esquema `public` de la base nueva.
+# 2. Crear el rol listmonk_app, sus permisos, pgcrypto y el search_path,
+#    usando la base nueva en lugar de postgres.
+sed "s/DATABASE postgres/DATABASE $SLUG_DB/g" sql/01-supabase-app.sql \
+  | psql -v ON_ERROR_STOP=1 -d "$SLUG_DB" -f -
 
-3. Definir las variables para el compose: `DB_NAME=mvp_<slug>` y, según el
-   modo TLS deseado, `DB_SSLMODE` y `DB_SSL_PARAMS`. Con `verify-full`,
-   inyectar la CA del servidor Postgres como file storage de Coolify en
-   `certs/ca.crt` (que `ops/preflight.sh` y el driver de listmonk leen desde
-   `/run/supabase/ca.crt`).
+# 3. Asignar al rol la clave de POSTGRES_PASSWORD (psql la pide por teclado).
+psql -d "$SLUG_DB" -c '\password listmonk_app'
+```
 
-Después de esto, `ops/preflight` valida versión, `pgcrypto`, esquema
-`extensions` en el `search_path`, ausencia de tablas de otro propietario y
-permisos del rol, antes de que `prepare` instale las tablas de listmonk.
+Después, en Coolify, definir `DB_NAME=mvp_<slug>` y, según el modo TLS
+deseado, `DB_SSLMODE` y `DB_SSL_PARAMS`. Con `verify-full`, inyectar la CA del
+servidor Postgres como file storage de Coolify en `certs/ca.crt` (que
+`ops/preflight.sh` y el driver de listmonk leen desde `/run/supabase/ca.crt`).
+
+Con esto, `ops/preflight` valida versión, `pgcrypto`, esquema `extensions` en
+el `search_path`, ausencia de tablas de otro propietario y permisos del rol,
+antes de que `prepare` instale las tablas de listmonk.
 
 `bash scripts/coolify-check.sh` renderiza los composes con valores ficticios
-no secretos y verifica que respeten el contrato (sin `ports`, `container_name`,
-`privileged`, `cap_add`, `devices`, `network_mode`/`pid`/`ipc` host, mounts
-fuera del repo o `docker.sock`, ni `name:` en raíz/red ni `name:` de volumen
-que no sea `${VAR:-default}`) y que `mvp_prueba` y `disable` aparezcan
-efectivamente en los campos exactos del render
-(`PGSSLMODE`/`LISTMONK_db__ssl_mode` y
-`PGDATABASE`/`LISTMONK_db__database`).
+no secretos y verifica que respeten el contrato Coolify (sin `ports`,
+`container_name`, `privileged`, `cap_add`, `devices`, `network_mode`/`pid`/`ipc`
+host, mounts fuera del repo o `docker.sock`, ni `name:` en raíz/red ni `name:`
+de volumen que no sea `${VAR:-default}`) y que `mvp_prueba` y `disable`
+aparezcan efectivamente en los campos exactos del render
+(`PGSSLMODE`/`LISTMONK_db__ssl_mode` y `PGDATABASE`/`LISTMONK_db__database`).
