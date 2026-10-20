@@ -22,3 +22,69 @@ Abrir http://localhost:8094. Usuario admin; clave inicial ADMIN_PASSWORD en .env
 Compatibilidad revisada contra documentación/código: PostgreSQL, ssl_mode=verify-full y CA mediante db.params. Falta ejecutar instalación, SQL, SMTP y restauración con un Supabase real. ZIP revisado estáticamente; no desplegado.
 
 Se utiliza Supabase solo como PostgreSQL: usuarios y medios los gestiona listmonk, sin Supabase Auth/Storage. La imagen instala ejemplos nativos de listas/suscriptores/campañas; eliminarlos desde la interfaz antes de importar datos reales. La plantilla Hefesto se carga manualmente; no hay campaña programada por el kit.
+
+## Despliegue en Coolify (MVP Hefesto)
+
+El kit se despliega desde `https://github.com/buguenocesar92/hefesto-boletines-listmonk-supabase`
+usando el build pack Docker Compose. Coolify queda a cargo del dominio y TLS
+vía Traefik. El servicio web expone `9000` y nunca publica puertos.
+
+Variables nuevas (con su valor por defecto):
+
+| Variable | Default | Notas |
+| --- | --- | --- |
+| `DB_NAME` | `postgres` | Base lógica a la que se conecta el kit. En el MVP compartido del Hefesto cada app usa `mvp_<slug>` para mantenerse aislada dentro del mismo Postgres. |
+| `DB_SSLMODE` | `verify-full` | Modo TLS para `psql` y para el driver de listmonk. Para red interna donde Postgres va sin TLS, fijar `disable`; en ese caso el certificado CA no es obligatorio (la carpeta `certs/` queda vacía salvo el README). |
+| `DB_SSL_PARAMS` | `sslrootcert=/run/supabase/ca.crt` | Parámetros extra que el driver de listmonk concatena al DSN. Sólo el `sslrootcert` se ve afectado por `DB_SSLMODE`. Cuando el modo no es `verify-full`, fijar `DB_SSL_PARAMS=""` para impedir que el driver intente leer una CA inexistente. |
+
+Variables existentes obligatorias: `POSTGRES_HOST`, `POSTGRES_USERNAME`
+(default `listmonk_app`), `POSTGRES_PASSWORD`, `ADMIN_PASSWORD`,
+`NEWS_HOST`, `SUPABASE_DEDICATED_CONFIRMED=true`,
+`SUPABASE_DATA_API_DISABLED=true`, `DELIVERY_ENABLED=false`.
+
+### Base de datos propia `mvp_<slug>`
+
+En el MVP compartido cada app vive en su propia base del mismo Postgres
+(`mvp_<slug>`), no en `postgres`. El rol sigue siendo `listmonk_app`:
+`POSTGRES_USERNAME` debe quedar en `listmonk_app`, porque `ops/preflight.sql`
+exige ese nombre literal.
+
+Antes del primer despliegue, ejecutar estos pasos en este orden desde una
+terminal con `psql` y el rol administrativo `postgres`. No usar el editor web
+de Supabase: `CREATE DATABASE` y `\password` necesitan `psql`.
+
+```sh
+# Conexión administrativa (psql pide la clave de postgres por teclado).
+# Con TLS: PGSSLMODE=verify-full y PGSSLROOTCERT=certs/ca.crt.
+export PGHOST=<host de Postgres> PGPORT=5432 PGUSER=postgres PGSSLMODE=disable
+SLUG_DB=mvp_boletines
+
+# 1. Crear la base y, dentro de ella, el esquema extensions.
+psql -v ON_ERROR_STOP=1 -d postgres -c "CREATE DATABASE $SLUG_DB"
+psql -v ON_ERROR_STOP=1 -d "$SLUG_DB" -c 'CREATE SCHEMA IF NOT EXISTS extensions'
+
+# 2. Crear el rol listmonk_app, sus permisos, pgcrypto y el search_path,
+#    usando la base nueva en lugar de postgres.
+sed "s/DATABASE postgres/DATABASE $SLUG_DB/g" sql/01-supabase-app.sql \
+  | psql -v ON_ERROR_STOP=1 -d "$SLUG_DB" -f -
+
+# 3. Asignar al rol la clave de POSTGRES_PASSWORD (psql la pide por teclado).
+psql -d "$SLUG_DB" -c '\password listmonk_app'
+```
+
+Después, en Coolify, definir `DB_NAME=mvp_<slug>` y, según el modo TLS
+deseado, `DB_SSLMODE` y `DB_SSL_PARAMS`. Con `verify-full`, inyectar la CA del
+servidor Postgres como file storage de Coolify en `certs/ca.crt` (que
+`ops/preflight.sh` y el driver de listmonk leen desde `/run/supabase/ca.crt`).
+
+Con esto, `ops/preflight` valida versión, `pgcrypto`, esquema `extensions` en
+el `search_path`, ausencia de tablas de otro propietario y permisos del rol,
+antes de que `prepare` instale las tablas de listmonk.
+
+`bash scripts/coolify-check.sh` renderiza los composes con valores ficticios
+no secretos y verifica que respeten el contrato Coolify (sin `ports`,
+`container_name`, `privileged`, `cap_add`, `devices`, `network_mode`/`pid`/`ipc`
+host, mounts fuera del repo o `docker.sock`, ni `name:` en raíz/red ni `name:`
+de volumen que no sea `${VAR:-default}`) y que `mvp_prueba` y `disable`
+aparezcan efectivamente en los campos exactos del render
+(`PGSSLMODE`/`LISTMONK_db__ssl_mode` y `PGDATABASE`/`LISTMONK_db__database`).

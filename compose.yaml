@@ -1,22 +1,27 @@
-name: ${COMPOSE_PROJECT_NAME:?Ejecutar configure.py}
+# Nombre del proyecto: Coolify lo fija; no declaramos `name:` a nivel raíz
+# para que pueda aplicar el suyo.
 x-db-env: &db-env
   PGHOST: ${POSTGRES_HOST:?Configurar host}
   PGPORT: '5432'
-  PGDATABASE: postgres
-  PGUSER: ${POSTGRES_USERNAME:?Configurar rol}
+  PGDATABASE: ${DB_NAME:-postgres}
+  PGUSER: ${POSTGRES_USERNAME:-listmonk_app}
   PGPASSWORD: ${POSTGRES_PASSWORD:?Configurar clave}
-  PGSSLMODE: verify-full
+  PGSSLMODE: ${DB_SSLMODE:-verify-full}
   PGSSLROOTCERT: /run/supabase/ca.crt
   PGCONNECT_TIMEOUT: '15'
 x-app-env: &app-env
   LISTMONK_app__address: 0.0.0.0:9000
   LISTMONK_db__host: ${POSTGRES_HOST:?Configurar host}
   LISTMONK_db__port: '5432'
-  LISTMONK_db__user: ${POSTGRES_USERNAME:?Configurar rol}
+  LISTMONK_db__user: ${POSTGRES_USERNAME:-listmonk_app}
   LISTMONK_db__password: ${POSTGRES_PASSWORD:?Configurar clave}
-  LISTMONK_db__database: postgres
-  LISTMONK_db__ssl_mode: verify-full
-  LISTMONK_db__params: sslrootcert=/run/supabase/ca.crt connect_timeout=15 application_name=hefesto_listmonk
+  LISTMONK_db__database: ${DB_NAME:-postgres}
+  LISTMONK_db__ssl_mode: ${DB_SSLMODE:-verify-full}
+  # Por defecto conserva `sslrootcert=/run/supabase/ca.crt` para el modo
+  # verify-full. Cuando DB_SSLMODE no es verify-full fijar DB_SSL_PARAMS=""
+  # para impedir que el driver intente leer una CA inexistente (require,
+  # prefer o disable).
+  LISTMONK_db__params: ${DB_SSL_PARAMS-sslrootcert=/run/supabase/ca.crt} connect_timeout=15 application_name=hefesto_listmonk
   LISTMONK_db__max_open: '5'
   LISTMONK_db__max_idle: '2'
   LISTMONK_db__max_lifetime: 300s
@@ -81,4 +86,4 @@ services:
     volumes: [./certs:/run/supabase:ro, ./ops:/opt/hefesto:ro]
 volumes:
   uploads:
-    name: ${VOLUME_PREFIX:?Falta prefijo}-uploads
+    name: ${VOLUME_PREFIX:-hefesto-boletines}-uploads
